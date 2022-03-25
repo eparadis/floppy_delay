@@ -1,61 +1,92 @@
 // a 3.5" floppy nominally rotates at 300rpm, which is a period of 200 mS
 
 // the floppy control lines
-#define _DENSITY_SELECT 2
-#define _INDEX 3
+#define _STEP 7
+#define _DIR 6
 #define _MOTORA_EN 4
 #define _DRIVEA_SEL 5
-#define _DIR 6
-#define _STEP 7
+#define _HEAD_SEL A0 // (aka SIDE) analog input used as a digital output
+#define _INDEX 3
+#define _READ_DATA 12
 #define _WRITE_DATA 8
 #define _WRITE_EN 9
 #define _TRACK0 10
-#define _WRITE_PROTECT 11
-#define _READ_DATA 12
-#define _HEAD_SEL A0 // analog input used as a digital output
-#define _DISK_CHANGE A1 // analog input used as a digital input
+
+
+// the floppy bus uses open collector drivers
+// for details, see https://github.com/dhansel/ArduinoFDC/blob/cd3b1c0417d39498b1bb882b5a2bcb5ef93bb41c/ArduinoFDC.cpp#L238
+void openCollectorPinMode( byte pin) {
+  digitalWrite(pin, LOW);
+  pinMode(pin, INPUT);
+}
+
+// again, see dhansel's code linked above.
+void digitalWriteOC(byte pin, byte state) {
+  if( state==LOW )
+    pinMode(pin, OUTPUT); // the pin is set to output LOW, so setting it to OUTPUT mode drives the pin to zero volts
+  else 
+    pinMode(pin, INPUT); // setting the pin HIGH leaves it floating/hi-Z
+}
 
 void selectHead( byte head) {
   if( head == 1)
-    digitalWrite(_HEAD_SEL, LOW);
+    digitalWriteOC(_HEAD_SEL, LOW);
   else
-    digitalWrite(_HEAD_SEL, HIGH);
+    digitalWriteOC(_HEAD_SEL, HIGH);
 }
 
 void startMotor() {
-  digitalWrite(_MOTORA_EN, LOW);
+  digitalWriteOC(_MOTORA_EN, LOW);
 }
 
 void stopMotor() {
   // We might want to stop the motor to reduce wear when idling
-  digitalWrite(_MOTORA_EN, HIGH);
+  digitalWriteOC(_MOTORA_EN, HIGH);
 }
 
 void enableWrite() {
-  digitalWrite(_WRITE_EN, LOW);
+  digitalWriteOC(_WRITE_EN, LOW);
 }
 
 void disableWrite() {
-  digitalWrite(_WRITE_EN, HIGH);
+  digitalWriteOC(_WRITE_EN, HIGH);
+}
+
+void enableDrive() {
+  digitalWriteOC(_DRIVEA_SEL, LOW);
+}
+
+void disableDrive() {
+  digitalWriteOC(_DRIVEA_SEL, HIGH);
 }
 
 void setup() {
-  pinMode(_DENSITY_SELECT, INPUT);
-  pinMode(_INDEX, INPUT);
-  pinMode(_MOTORA_EN, OUTPUT);
-  pinMode(_DRIVEA_SEL, OUTPUT);
-  pinMode(_DIR, OUTPUT);
-  pinMode(_STEP, OUTPUT);
-  pinMode(_WRITE_DATA, OUTPUT);
-  pinMode(_WRITE_EN, OUTPUT);
-  pinMode(_TRACK0, INPUT);
-  pinMode(_WRITE_PROTECT, INPUT);
-  pinMode(_READ_DATA, INPUT);
-  pinMode(_HEAD_SEL, OUTPUT);
-  pinMode(_DISK_CHANGE, INPUT);
+  // outputs from Arduino to Floppy
+  openCollectorPinMode(_STEP);
+  openCollectorPinMode(_DIR);
+  openCollectorPinMode(_MOTORA_EN);
+  openCollectorPinMode(_DRIVEA_SEL);
+  openCollectorPinMode(_HEAD_SEL); // aka SIDE
+  openCollectorPinMode(_WRITE_EN);
+
+  // I'm unsure as to why dhansel sets up this one pin that way
+  // I think it's because they're using a the timer/output-compare system
+  //  to drive this pin directly, which can't do the "open collector"
+  //  trick. Since I'm doing everything in software, I feel okay using
+  //  the open collector trick. 
+  //digitalWrite(_WRITE_DATA, HIGH);
+  //pinMode(_WRITE_DATA, OUTPUT); 
+  openCollectorPinMode(_WRITE_DATA);
+
+  // inputs to Arduino from Floppy
+  pinMode(_READ_DATA, INPUT_PULLUP); // dhansel recommends an additional external pullup of 1K
+  pinMode(_INDEX, INPUT_PULLUP);
+  pinMode(_TRACK0, INPUT_PULLUP);
+
   Serial.begin(115200);
 
   startMotor();
+  enableDrive();
   selectHead(0);
 }
 
@@ -108,8 +139,8 @@ byte readSymbolFM() {
 byte buffer[25];
 
 void loop() {
-  while(digitalRead(_TRACK0) == HIGH) {
-    // wait until the track0 signal is asserted
+  while(digitalRead(_INDEX) == HIGH) {
+    // wait until the _INDEX signal is asserted
     asm("nop");
   }
 
@@ -127,8 +158,8 @@ void loop() {
   disableWrite();
 
 
-  while(digitalRead(_TRACK0) == HIGH) {
-    // wait until the track0 signal is asserted
+  while(digitalRead(_INDEX) == HIGH) {
+    // wait until the _INDEX signal is asserted
     asm("nop");
   }
 
@@ -147,6 +178,6 @@ void loop() {
   // print out what we found
   Serial.print("\nbuf>>>");
   for( byte i = 0; i < 25; i += 1)
-    Serial.print('A' + buffer[i]);
+    Serial.write('A' + buffer[i]);
   Serial.print("<<<\n");
 }
